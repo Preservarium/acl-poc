@@ -1,0 +1,26 @@
+services:
+  nginx:
+    build: ./nginx
+    ports:
+      - "8081:80"
+    depends_on:
+      - frontend-acl
+      - backend-acl
+    restart: unless-stopped
+
+  frontend-acl:
+    build: ./frontend
+    environment:
+      - VITE_API_URL=/api
+    restart: unless-stopped
+
+  backend-acl:
+    build: ./backend
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/acl_poc.db
+      - SECRET_KEY=${SECRET_KEY:-changeme-insecure-secret-key}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+    volumes:
+      - /Users/andymonga/Projects/PreservariumV3/main/acl-poc/data:/app/data
+    restart: unless-stopped

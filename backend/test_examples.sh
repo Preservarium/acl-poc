@@ -1,0 +1,106 @@
+#!/bin/bash
+
+# ACL POC API Testing Examples
+# Make sure the server is running: uvicorn app.main:app --reload
+
+BASE_URL="http://localhost:8000/api"
+
+echo "========================================"
+echo "ACL POC - Phase 2 API Test Examples"
+echo "========================================"
+echo ""
+
+# Note: You need to create an admin user first via the database or a setup script
+# For testing, we'll show the API structure
+
+echo "1. Login"
+echo "--------"
+echo "curl -X POST $BASE_URL/auth/login \\"
+echo "  -H 'Content-Type: application/json' \\"
+echo "  -d '{\"username\": \"admin\", \"password\": \"admin123\"}'"
+echo ""
+
+echo "2. Get Current User"
+echo "-------------------"
+echo "curl -X GET $BASE_URL/auth/me \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN'"
+echo ""
+
+echo "3. Create a Site (Admin only)"
+echo "-----------------------------"
+echo "curl -X POST $BASE_URL/sites \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN' \\"
+echo "  -H 'Content-Type: application/json' \\"
+echo "  -d '{\"name\": \"Factory 1\"}'"
+echo ""
+
+echo "4. List Sites"
+echo "-------------"
+echo "curl -X GET $BASE_URL/sites \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN'"
+echo ""
+
+echo "5. Create a Plan"
+echo "----------------"
+echo "curl -X POST $BASE_URL/plans \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN' \\"
+echo "  -H 'Content-Type: application/json' \\"
+echo "  -d '{\"name\": \"Floor 1\", \"site_id\": \"SITE_ID\"}'"
+echo ""
+
+echo "6. Create a Sensor"
+echo "------------------"
+echo "curl -X POST $BASE_URL/sensors \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN' \\"
+echo "  -H 'Content-Type: application/json' \\"
+echo "  -d '{\"name\": \"Sensor 001\", \"plan_id\": \"PLAN_ID\"}'"
+echo ""
+
+echo "7. Grant Permission"
+echo "-------------------"
+echo "curl -X POST $BASE_URL/permissions \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN' \\"
+echo "  -H 'Content-Type: application/json' \\"
+echo "  -d '{"
+echo "    \"grantee_type\": \"user\","
+echo "    \"grantee_id\": \"USER_ID\","
+echo "    \"resource_type\": \"site\","
+echo "    \"resource_id\": \"SITE_ID\","
+echo "    \"permission\": \"read\","
+echo "    \"effect\": \"allow\","
+echo "    \"inherit\": true"
+echo "  }'"
+echo ""
+
+echo "8. List My Permissions"
+echo "----------------------"
+echo "curl -X GET $BASE_URL/permissions \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN'"
+echo ""
+
+echo "9. Bulk Permission Check"
+echo "------------------------"
+echo "curl -X POST $BASE_URL/permissions/check \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN' \\"
+echo "  -H 'Content-Type: application/json' \\"
+echo "  -d '{"
+echo "    \"checks\": ["
+echo "      {\"resource_type\": \"site\", \"resource_id\": \"SITE_ID\", \"permission\": \"read\"},"
+echo "      {\"resource_type\": \"plan\", \"resource_id\": \"PLAN_ID\", \"permission\": \"write\"}"
+echo "    ]"
+echo "  }'"
+echo ""
+
+echo "10. Get Resource Permissions"
+echo "----------------------------"
+echo "curl -X GET $BASE_URL/permissions/resource/site/SITE_ID \\"
+echo "  -H 'Authorization: Bearer YOUR_TOKEN'"
+echo ""
+
+echo "========================================"
+echo "For a working demo, you need to:"
+echo "1. Start the server"
+echo "2. Create an admin user (via alembic or direct DB)"
+echo "3. Login to get a token"
+echo "4. Use the token in subsequent requests"
+echo "========================================"
