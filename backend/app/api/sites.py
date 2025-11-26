@@ -1,5 +1,6 @@
 """Sites API endpoints."""
 
+import json
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,20 @@ from app.services.permission_service import PermissionService
 from app.core.dependencies import get_current_user, get_current_admin_user
 
 router = APIRouter(prefix="/sites", tags=["sites"])
+
+
+def parse_fields(fields):
+    """Parse fields from database - handle both list and JSON string."""
+    if fields is None:
+        return None
+    if isinstance(fields, list):
+        return fields
+    if isinstance(fields, str):
+        try:
+            return json.loads(fields)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None
 
 
 @router.get("", response_model=List[SiteResponse])
@@ -339,7 +354,7 @@ async def get_site_permissions(
                 permission=perm.permission,
                 effect=perm.effect,
                 inherit=perm.inherit,
-                fields=perm.fields,
+                fields=parse_fields(perm.fields),
                 expires_at=perm.expires_at,
                 granted_at=perm.granted_at,
                 granted_by_name=granted_by_name,

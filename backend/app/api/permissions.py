@@ -1,5 +1,6 @@
 """Permissions API endpoints."""
 
+import json
 from typing import List, Optional
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -27,6 +28,20 @@ from app.core.dependencies import get_current_user
 from app.tasks.permission_expiration import get_expiring_permissions
 
 router = APIRouter(prefix="/permissions", tags=["permissions"])
+
+
+def parse_fields(fields):
+    """Parse fields from database - handle both list and JSON string."""
+    if fields is None:
+        return None
+    if isinstance(fields, list):
+        return fields
+    if isinstance(fields, str):
+        try:
+            return json.loads(fields)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None
 
 
 async def get_grantee_name(db: AsyncSession, grantee_type: str, grantee_id: str) -> Optional[str]:
@@ -119,8 +134,11 @@ async def list_my_permissions(
     # Get user's permissions
     user_perms = await perm_service.list_for_user(current_user.id)
 
+    # Get user's groups via the ACL system
+    user_groups = await current_user.get_groups(db)
+    group_ids = [group.id for group in user_groups]
+
     # Get group permissions
-    group_ids = [group.id for group in current_user.groups]
     group_perms = []
     if group_ids:
         result = await db.execute(
@@ -743,7 +761,7 @@ async def compute_effective_permissions(
             applicable_perms.append({
                 'permission': perm.permission.value,
                 'effect': perm.effect.value,
-                'fields': perm.fields,
+                'fields': parse_fields(perm.fields),
                 'inherit': perm.inherit,
                 'source': source,
                 'is_inherited': is_inherited,
@@ -878,13 +896,14 @@ async def get_permission_matrix(
                 parent_name = await get_resource_name(db, perm.resource_type.value, perm.resource_id)
                 perm_info['source'] = f"{perm.resource_type.value}: {parent_name}"
 
-            if perm.fields is not None:
+            parsed_fields = parse_fields(perm.fields)
+            if parsed_fields is not None:
                 perm_info['has_field_restrictions'] = True
                 # Merge fields if multiple permissions exist
                 if perm_info['fields'] is None:
-                    perm_info['fields'] = perm.fields
+                    perm_info['fields'] = parsed_fields
                 else:
-                    perm_info['fields'] = list(set(perm_info['fields'] + perm.fields))
+                    perm_info['fields'] = list(set(perm_info['fields'] + parsed_fields))
 
     # Build matrix rows
     matrix_rows = []

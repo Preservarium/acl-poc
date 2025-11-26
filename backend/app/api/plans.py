@@ -1,5 +1,6 @@
 """Plans API endpoints."""
 
+import json
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,20 @@ from app.services.permission_service import PermissionService, get_user_groups
 from app.core.dependencies import get_current_user
 
 router = APIRouter(prefix="/plans", tags=["plans"])
+
+
+def parse_fields(fields):
+    """Parse fields from database - handle both list and JSON string."""
+    if fields is None:
+        return None
+    if isinstance(fields, list):
+        return fields
+    if isinstance(fields, str):
+        try:
+            return json.loads(fields)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None
 
 
 @router.get("", response_model=List[PlanResponse])
@@ -332,7 +347,7 @@ async def get_plan_permissions(
                 permission=perm.permission,
                 effect=perm.effect,
                 inherit=perm.inherit,
-                fields=perm.fields,
+                fields=parse_fields(perm.fields),
                 expires_at=perm.expires_at,
                 granted_at=perm.granted_at,
                 members=members,
@@ -394,7 +409,7 @@ async def get_plan_permissions(
                     permission=perm.permission,
                     effect=perm.effect,
                     inherit=perm.inherit,
-                    fields=perm.fields,
+                    fields=parse_fields(perm.fields),
                     expires_at=perm.expires_at,
                     granted_at=perm.granted_at,
                     source=f"site:{site.name}",
@@ -459,10 +474,11 @@ async def get_plan_permissions(
                     user_perms_map[user_id]['sources'].add('direct')
 
                 # Handle fields (None means all fields)
-                if perm.fields is None:
+                parsed_fields = parse_fields(perm.fields)
+                if parsed_fields is None:
                     user_perms_map[user_id]['has_all_fields'] = True
                 elif not user_perms_map[user_id]['has_all_fields']:
-                    user_perms_map[user_id]['fields'].update(perm.fields)
+                    user_perms_map[user_id]['fields'].update(parsed_fields)
 
         # Convert to EffectivePermission objects
         for user_id, perm_data in user_perms_map.items():

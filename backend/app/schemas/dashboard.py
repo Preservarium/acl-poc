@@ -1,6 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, Dict, Any
 from datetime import datetime
+import json
 from app.schemas.permission import PermissionMetadata
 
 
@@ -8,6 +9,21 @@ class DashboardBase(BaseModel):
     """Base dashboard schema."""
     name: str
     config: Dict[str, Any] = {}
+
+    @field_validator('config', mode='before')
+    @classmethod
+    def parse_config(cls, v):
+        """Parse config from JSON string if needed (SQLite returns JSON as string)."""
+        if v is None:
+            return {}
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, ValueError):
+                return {}
+        return {}
 
 
 class DashboardCreate(DashboardBase):
