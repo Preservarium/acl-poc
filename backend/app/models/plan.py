@@ -13,6 +13,7 @@ class Plan(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
     name = Column(String(255), nullable=False, index=True)
+    description = Column(String(500), nullable=True)
     site_id = Column(String(36), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
     created_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -21,6 +22,7 @@ class Plan(Base):
     site = relationship("Site", back_populates="plans")
     creator = relationship("User", foreign_keys=[created_by])
     sensors = relationship("Sensor", back_populates="plan", cascade="all, delete-orphan")
+    brokers = relationship("Broker", back_populates="plan", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Plan(id={self.id}, name={self.name}, site_id={self.site_id})>"

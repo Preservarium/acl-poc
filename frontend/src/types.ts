@@ -17,7 +17,7 @@ export interface LoginResponse {
 }
 
 // Resource Types
-export type ResourceType = 'site' | 'area' | 'sensor'
+export type ResourceType = 'group' | 'user' | 'site' | 'plan' | 'sensor' | 'broker' | 'alarm' | 'alert' | 'dashboard'
 
 export interface Resource {
   id: number
@@ -120,4 +120,40 @@ export interface GroupMembership {
 // API Error Types
 export interface APIError {
   detail: string
+}
+
+// Effective Permissions Types
+export interface UserBasic {
+  id: string
+  username: string
+}
+
+export interface GroupBasic {
+  id: string
+  name: string
+}
+
+export interface ResourceWithSource {
+  resource_type: string
+  resource_id: string
+  resource_name: string
+  permission: string
+  source: string
+}
+
+export interface DirectPermission {
+  resource_type: string
+  resource_id: string
+  resource_name: string
+  permission: string
+  source: string
+}
+
+export interface EffectivePermissionsResponse {
+  user: UserBasic
+  groups: GroupBasic[]
+  sites_administered: ResourceWithSource[]
+  sites_write: ResourceWithSource[]
+  sites_read: ResourceWithSource[]
+  direct_permissions: DirectPermission[]
 }

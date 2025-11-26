@@ -1,19 +1,22 @@
 #!/bin/bash
 # Database initialization script
-# Creates migration if none exist, then runs migrations and seeds data
+# Tables are created by SQLAlchemy's create_all() in main.py
+# This script handles migrations (if any) and seeds data
 
 set -e
 
 echo "Checking for existing migrations..."
-if [ -z "$(ls -A /app/alembic/versions)" ]; then
-    echo "No migrations found. Creating initial migration..."
-    alembic revision --autogenerate -m "Initial schema"
+MIGRATION_FILES=$(find /app/alembic/versions -name "*.py" -not -name "__*" 2>/dev/null | wc -l | tr -d ' ')
+
+if [ "$MIGRATION_FILES" -gt 0 ]; then
+    echo "Found $MIGRATION_FILES migration file(s). Running migrations..."
+    alembic upgrade head || {
+        echo "Migration failed. Database may need manual intervention."
+        echo "Continuing with startup..."
+    }
+else
+    echo "No migrations found. Tables will be created by SQLAlchemy create_all()."
 fi
 
-echo "Running database migrations..."
-alembic upgrade head
-
-echo "Seeding database..."
-python seed_data.py
-
-echo "Database initialization complete!"
+echo "Starting application..."
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000

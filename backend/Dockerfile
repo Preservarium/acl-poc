@@ -12,5 +12,6 @@ COPY . .
 # Create data directory
 RUN mkdir -p /app/data
 
-# Run database initialization and start server
-CMD ["sh", "-c", "./init_db.sh && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Make init script executable and run it (it starts uvicorn at the end)
+RUN chmod +x ./init_db.sh
+CMD ["./init_db.sh"]

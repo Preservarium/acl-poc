@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, JSON
 from sqlalchemy.orm import relationship
 from uuid import uuid4
 import enum
@@ -15,13 +15,26 @@ class GranteeType(str, enum.Enum):
 
 class ResourceType(str, enum.Enum):
     """Type of resource."""
+    GROUP = "group"
+    USER = "user"
     SITE = "site"
     PLAN = "plan"
     SENSOR = "sensor"
+    BROKER = "broker"
+    ALARM = "alarm"
+    ALERT = "alert"
+    DASHBOARD = "dashboard"
+    HARDWARE = "hardware"
+    DATATYPE = "datatype"
+    PROTOCOL = "protocol"
+    PARSER = "parser"
+    MANUFACTURER = "manufacturer"
+    COMMUNICATION_MODE = "communication_mode"
 
 
 class Permission(str, enum.Enum):
     """Permission types."""
+    MEMBER = "member"  # Group membership only
     READ = "read"
     WRITE = "write"
     DELETE = "delete"
@@ -54,6 +67,8 @@ class ResourcePermission(Base):
     permission = Column(SQLEnum(Permission), nullable=False)
     effect = Column(SQLEnum(Effect), default=Effect.ALLOW, nullable=False)
     inherit = Column(Boolean, default=True, nullable=False)
+    fields = Column(JSON, nullable=True)  # List of field names or null for all
+    expires_at = Column(DateTime, nullable=True)
 
     # Metadata
     granted_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

@@ -1,7 +1,7 @@
 """Sensors API endpoints."""
 
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -108,6 +108,7 @@ async def create_sensor(
 @router.get("/{sensor_id}", response_model=SensorResponse)
 async def get_sensor(
     sensor_id: str,
+    include_permissions: bool = Query(False, description="Include permission metadata in response"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,7 +143,18 @@ async def get_sensor(
             detail="Sensor not found"
         )
 
-    return sensor
+    # Convert to response model
+    response = SensorResponse.model_validate(sensor)
+
+    # Add permission metadata if requested
+    if include_permissions:
+        response._permissions = await perm_service.get_permission_metadata(
+            current_user,
+            ResourceType.SENSOR,
+            sensor_id
+        )
+
+    return response
 
 
 @router.delete("/{sensor_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -156,6 +168,16 @@ async def delete_sensor(
 
     Requires 'delete' permission on the sensor.
     """
+    # Get sensor first (to check existence and get name)
+    result = await db.execute(select(Sensor).where(Sensor.id == sensor_id))
+    sensor = result.scalar_one_or_none()
+
+    if not sensor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sensor not found"
+        )
+
     perm_service = PermissionService(db)
 
     # Check permission
@@ -167,19 +189,15 @@ async def delete_sensor(
     )
 
     if not has_permission:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to delete this sensor"
-        )
-
-    # Get sensor
-    result = await db.execute(select(Sensor).where(Sensor.id == sensor_id))
-    sensor = result.scalar_one_or_none()
-
-    if not sensor:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sensor not found"
+        # Use the new helper function to provide detailed permission info
+        from app.core.dependencies import raise_permission_denied
+        await raise_permission_denied(
+            db,
+            current_user,
+            ResourceType.SENSOR.value,
+            sensor_id,
+            Permission.DELETE.value,
+            sensor.name
         )
 
     # Delete sensor

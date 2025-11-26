@@ -5,8 +5,18 @@ import type {
   MyPermission,
   GrantPermissionRequest,
   PermissionCheck,
-  PermissionCheckResult
+  PermissionCheckResult,
+  PermissionWithGrantee,
+  PlanPermissionsResponse,
+  PermissionMatrixResponse,
+  ExpiringPermission
 } from '@/types'
+
+// Fetch all permissions (admin only)
+export const fetchPermissions = async (): Promise<Permission[]> => {
+  const response = await apiClient.get<Permission[]>('/permissions/all')
+  return response.data
+}
 
 // Fetch user's permissions
 export const fetchMyPermissions = async (): Promise<{
@@ -87,4 +97,110 @@ export const checkPermission = async (
     { resource_type: resourceType as any, resource_id: resourceId, permission: permission as any }
   ])
   return result.results[0]?.allowed || false
+}
+
+// Fetch permissions for a site with grantee details
+export const fetchSitePermissions = async (siteId: string): Promise<PermissionWithGrantee[]> => {
+  const response = await apiClient.get<PermissionWithGrantee[]>(`/sites/${siteId}/permissions`)
+  return response.data
+}
+
+// Fetch permissions for a plan with inherited/direct/effective sections
+export const fetchPlanPermissions = async (
+  planId: string,
+  includeInherited: boolean = true,
+  includeEffective: boolean = true
+): Promise<PlanPermissionsResponse> => {
+  const response = await apiClient.get<PlanPermissionsResponse>(
+    `/plans/${planId}/permissions`,
+    {
+      params: {
+        include_inherited: includeInherited,
+        include_effective: includeEffective
+      }
+    }
+  )
+  return response.data
+}
+
+// Fetch resource hierarchy (for displaying parent resources)
+export const fetchResourceHierarchy = async (
+  resourceType: string,
+  resourceId: string
+): Promise<Array<{ type: string; id: string; name: string }>> => {
+  try {
+    const response = await apiClient.get<Array<{ type: string; id: string; name: string }>>(
+      `/resources/${resourceType}/${resourceId}/hierarchy`
+    )
+    return response.data
+  } catch (err) {
+    // Fallback: return empty array if endpoint doesn't exist
+    console.warn('Resource hierarchy endpoint not available:', err)
+    return []
+  }
+}
+
+// Check for existing permissions for a grantee on a resource
+export const checkExistingPermissions = async (
+  granteeType: string,
+  granteeId: string,
+  resourceType: string,
+  resourceId: string
+): Promise<Array<{
+  permission: string
+  fields?: string[]
+  source: string
+  isInherited?: boolean
+  isDirect?: boolean
+}>> => {
+  try {
+    const response = await apiClient.get(
+      `/permissions/check-existing`,
+      {
+        params: {
+          grantee_type: granteeType,
+          grantee_id: granteeId,
+          resource_type: resourceType,
+          resource_id: resourceId
+        }
+      }
+    )
+    return response.data
+  } catch (err) {
+    // If endpoint doesn't exist, return empty array
+    console.warn('Existing permissions check not available:', err)
+    return []
+  }
+}
+
+// Fetch permission matrix for a resource
+export const fetchPermissionMatrix = async (
+  resourceType: string,
+  resourceId: string
+): Promise<PermissionMatrixResponse> => {
+  const response = await apiClient.get<PermissionMatrixResponse>(
+    '/permissions/matrix',
+    {
+      params: {
+        resource_type: resourceType,
+        resource_id: resourceId
+      }
+    }
+  )
+  return response.data
+}
+
+// Fetch expiring permissions (admin only)
+export const fetchExpiringPermissions = async (
+  daysAhead: number = 7
+): Promise<ExpiringPermission[]> => {
+  const response = await apiClient.get<ExpiringPermission[]>(
+    '/permissions/expiring',
+    {
+      params: {
+        days_ahead: daysAhead
+      }
+    }
+  )
+  return response.data
 }

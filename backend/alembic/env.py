@@ -13,11 +13,14 @@ from app.database import Base
 from app.models import (
     User,
     Group,
-    group_users,
     ResourcePermission,
     Site,
     Plan,
     Sensor,
+    Broker,
+    Alarm,
+    Alert,
+    Dashboard,
 )
 
 # this is the Alembic Config object

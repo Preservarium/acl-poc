@@ -1,6 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Optional
+from app.schemas.permission import PermissionMetadata
 
 
 # Site schemas
@@ -19,6 +20,7 @@ class SiteResponse(SiteBase):
     id: str
     created_by: Optional[str] = None
     created_at: datetime
+    _permissions: Optional[PermissionMetadata] = None
 
     class Config:
         from_attributes = True
@@ -41,6 +43,7 @@ class PlanResponse(PlanBase):
     site_id: str
     created_by: Optional[str] = None
     created_at: datetime
+    _permissions: Optional[PermissionMetadata] = None
 
     class Config:
         from_attributes = True
@@ -63,6 +66,12 @@ class SensorResponse(SensorBase):
     plan_id: str
     created_by: Optional[str] = None
     created_at: datetime
+    field_a: Optional[str] = None
+    field_b: Optional[str] = None
+    field_c: Optional[str] = None
+    field_d: Optional[str] = None
+    field_e: Optional[str] = None
+    _permissions: Optional[PermissionMetadata] = None
 
     class Config:
         from_attributes = True

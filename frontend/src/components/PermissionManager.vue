@@ -59,6 +59,10 @@ const getResourceIcon = (type: string) => {
     case 'site': return '🏭'
     case 'plan': return '📋'
     case 'sensor': return '📡'
+    case 'alarm': return '🔔'
+    case 'alert': return '⚠️'
+    case 'broker': return '🔌'
+    case 'dashboard': return '📊'
     default: return '📄'
   }
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { fetchUsers, fetchGroups } from '@/api/users'
 import { grantPermission } from '@/api/permissions'
+import FieldSelector from './permissions/FieldSelector.vue'
 import type { User, Group, GranteeType, PermissionType } from '@/types'
 
 const props = defineProps<{
@@ -17,6 +18,8 @@ const granteeType = ref<GranteeType>('user')
 const granteeId = ref('')
 const permission = ref<PermissionType>('read')
 const inherit = ref(true)
+const expiresAt = ref<string>('')
+const selectedFields = ref<string[] | null>(null)
 
 const users = ref<User[]>([])
 const groups = ref<Group[]>([])
@@ -56,6 +59,30 @@ watch([granteeType, users, groups], () => {
   }
 }, { immediate: true })
 
+// Available fields based on resource type
+const availableFields = computed(() => {
+  switch (props.resourceType) {
+    case 'site':
+      return ['name', 'created_by', 'created_at']
+    case 'plan':
+      return ['name', 'site_id', 'created_by', 'created_at']
+    case 'sensor':
+      return ['name', 'plan_id', 'created_by', 'created_at']
+    case 'alarm':
+      return ['name', 'sensor_id', 'created_by', 'created_at']
+    case 'alert':
+      return ['message', 'severity', 'alarm_id', 'created_by', 'created_at']
+    case 'broker':
+      return ['name', 'protocol', 'plan_id', 'created_by', 'created_at']
+    case 'dashboard':
+      return ['name', 'config', 'created_by', 'created_at']
+    case 'group':
+      return ['name', 'created_at']
+    default:
+      return []
+  }
+})
+
 const handleSubmit = async () => {
   if (!granteeId.value) {
     error.value = 'Please select a grantee'
@@ -66,7 +93,7 @@ const handleSubmit = async () => {
   error.value = null
 
   try {
-    await grantPermission({
+    const grantData: any = {
       grantee_type: granteeType.value,
       grantee_id: granteeId.value,
       resource_type: props.resourceType as any,
@@ -74,12 +101,25 @@ const handleSubmit = async () => {
       permission: permission.value,
       effect: 'allow',
       inherit: inherit.value
-    })
+    }
+
+    // Add optional fields if they have values
+    if (expiresAt.value) {
+      grantData.expires_at = expiresAt.value
+    }
+
+    if (selectedFields.value && selectedFields.value.length > 0) {
+      grantData.fields = selectedFields.value
+    }
+
+    await grantPermission(grantData)
 
     // Reset form
     granteeId.value = ''
     permission.value = 'read'
     inherit.value = true
+    expiresAt.value = ''
+    selectedFields.value = null
 
     emit('granted')
   } catch (err: any) {
@@ -157,7 +197,31 @@ onMounted(() => {
           <option value="delete">Delete</option>
           <option value="create">Create</option>
           <option value="manage">Manage</option>
+          <option value="member">Member</option>
         </select>
+      </div>
+
+      <!-- Field Selector -->
+      <FieldSelector
+        v-if="permission === 'read' || permission === 'write'"
+        :available-fields="availableFields"
+        v-model="selectedFields"
+      />
+
+      <!-- Expiration Date -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          Expiration Date (optional)
+        </label>
+        <input
+          v-model="expiresAt"
+          type="datetime-local"
+          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="Leave empty for no expiration"
+        />
+        <p class="text-xs text-gray-500 mt-1">
+          Permission will be automatically revoked after this date/time
+        </p>
       </div>
 
       <!-- Inherit Checkbox -->

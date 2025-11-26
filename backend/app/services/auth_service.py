@@ -31,12 +31,24 @@ class AuthService:
         if not user:
             return None
 
+        # Check if user is disabled
+        if user.disabled:
+            return None
+
         if not verify_password(password, user.password_hash):
             return None
 
         return user
 
-    async def create_user(self, username: str, password: str, is_admin: bool = False) -> User:
+    async def create_user(
+        self,
+        username: str,
+        password: str,
+        is_admin: bool = False,
+        email: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None
+    ) -> User:
         """
         Create a new user.
 
@@ -44,6 +56,9 @@ class AuthService:
             username: The username
             password: The plain text password
             is_admin: Whether the user is an admin
+            email: User's email address (optional)
+            first_name: User's first name (optional)
+            last_name: User's last name (optional)
 
         Returns:
             Created User object
@@ -51,7 +66,10 @@ class AuthService:
         user = User(
             username=username,
             password_hash=get_password_hash(password),
-            is_admin=is_admin
+            is_admin=is_admin,
+            email=email,
+            first_name=first_name,
+            last_name=last_name
         )
         self.db.add(user)
         await self.db.commit()

@@ -49,7 +49,13 @@ const formatDate = (dateString: string) => {
             Inherit
           </th>
           <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+            Fields
+          </th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
             Granted
+          </th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+            Expires
           </th>
           <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
             Actions
@@ -73,7 +79,8 @@ const formatDate = (dateString: string) => {
                     'bg-blue-100 text-blue-800': permission.permission === 'read',
                     'bg-green-100 text-green-800': permission.permission === 'write',
                     'bg-orange-100 text-orange-800': permission.permission === 'create',
-                    'bg-red-100 text-red-800': permission.permission === 'delete'
+                    'bg-red-100 text-red-800': permission.permission === 'delete',
+                    'bg-indigo-100 text-indigo-800': permission.permission === 'member'
                   }">
               {{ permission.permission }}
             </span>
@@ -92,7 +99,19 @@ const formatDate = (dateString: string) => {
             <span v-else class="text-gray-300 text-lg">−</span>
           </td>
           <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+            <span v-if="permission.fields && permission.fields.length > 0" class="text-xs">
+              {{ permission.fields.join(', ') }}
+            </span>
+            <span v-else class="text-gray-400">All</span>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
             {{ formatDate(permission.granted_at) }}
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+            <span v-if="permission.expires_at" class="text-xs">
+              {{ formatDate(permission.expires_at) }}
+            </span>
+            <span v-else class="text-gray-400">Never</span>
           </td>
           <td class="px-6 py-4 whitespace-nowrap text-right">
             <button

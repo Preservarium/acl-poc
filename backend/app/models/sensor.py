@@ -17,9 +17,17 @@ class Sensor(Base):
     created_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Optional custom fields
+    field_a = Column(String(255), nullable=True)
+    field_b = Column(String(255), nullable=True)
+    field_c = Column(String(255), nullable=True)
+    field_d = Column(String(255), nullable=True)
+    field_e = Column(String(255), nullable=True)
+
     # Relationships
     plan = relationship("Plan", back_populates="sensors")
     creator = relationship("User", foreign_keys=[created_by])
+    alarms = relationship("Alarm", back_populates="sensor", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Sensor(id={self.id}, name={self.name}, plan_id={self.plan_id})>"

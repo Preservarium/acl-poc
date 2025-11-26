@@ -10,6 +10,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: false }
   },
   {
+    path: '/access-denied',
+    name: 'AccessDenied',
+    component: () => import('@/views/AccessDenied.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/',
     redirect: '/dashboard'
   },
@@ -29,6 +35,78 @@ const routes: RouteRecordRaw[] = [
     path: '/permissions',
     name: 'permissions',
     component: () => import('@/views/PermissionsView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/groups',
+    name: 'groups',
+    component: () => import('@/views/GroupsView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/groups/:id',
+    name: 'GroupDetail',
+    component: () => import('@/views/GroupDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/users',
+    name: 'Users',
+    component: () => import('@/views/UsersView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/users/:id',
+    name: 'UserDetail',
+    component: () => import('@/views/UserDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/sites/:id/:tab?',
+    name: 'SiteDetail',
+    component: () => import('@/views/SiteDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/plans/:id/:tab?',
+    name: 'PlanDetail',
+    component: () => import('@/views/PlanDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/sensors/:id',
+    name: 'SensorDetail',
+    component: () => import('@/views/SensorDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/alarms/:id',
+    name: 'AlarmDetail',
+    component: () => import('@/views/AlarmDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/brokers/:id',
+    name: 'BrokerDetail',
+    component: () => import('@/views/BrokerDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/dashboards',
+    name: 'Dashboards',
+    component: () => import('@/views/DashboardsView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/dashboards/:id',
+    name: 'DashboardDetail',
+    component: () => import('@/views/DashboardDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/audit-logs',
+    name: 'AuditLogs',
+    component: () => import('@/views/AuditLogView.vue'),
     meta: { requiresAuth: true }
   },
   {
