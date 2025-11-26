@@ -334,6 +334,7 @@ onMounted(() => {
           <template #permissions>
             <PlanPermissions
               :plan-id="planId"
+              :plan-name="plan?.name"
             />
           </template>
         </ResourceTabs>

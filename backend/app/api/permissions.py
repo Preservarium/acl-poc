@@ -1,31 +1,30 @@
 """Permissions API endpoints."""
 
 import json
-from typing import List, Optional
-from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, and_
+from datetime import datetime
 
+from app.core.dependencies import get_current_user
 from app.database import get_db
-from app.models import User, Group, Site, Plan, Sensor, ResourcePermission
-from app.models.permission import ResourceType, Permission as PermissionEnum
+from app.models import Group, Plan, ResourcePermission, Sensor, Site, User
+from app.models.permission import Permission as PermissionEnum, ResourceType
 from app.schemas import (
-    PermissionCreate,
-    PermissionResponse,
+    ExpiringPermissionResponse,
+    MatrixGrantee,
+    MatrixPermissionInfo,
+    MatrixRow,
     PermissionCheckRequest,
     PermissionCheckResponse,
     PermissionCheckResult,
+    PermissionCreate,
     PermissionMatrixResponse,
-    MatrixRow,
-    MatrixGrantee,
-    MatrixPermissionInfo,
-    ExpiringPermissionResponse,
+    PermissionResponse,
 )
-from app.services.permission_service import PermissionService
 from app.services.audit_service import AuditService
-from app.core.dependencies import get_current_user
+from app.services.permission_service import PermissionService
 from app.tasks.permission_expiration import get_expiring_permissions
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/permissions", tags=["permissions"])
 
@@ -44,56 +43,56 @@ def parse_fields(fields):
     return None
 
 
-async def get_grantee_name(db: AsyncSession, grantee_type: str, grantee_id: str) -> Optional[str]:
+async def get_grantee_name(db: AsyncSession, grantee_type: str, grantee_id: str) -> str | None:
     """Get the name of a grantee (user or group)."""
     if grantee_type == "user":
         result = await db.execute(select(User).where(User.id == grantee_id))
         user = result.scalar_one_or_none()
         return user.username if user else None
-    elif grantee_type == "group":
+    if grantee_type == "group":
         result = await db.execute(select(Group).where(Group.id == grantee_id))
         group = result.scalar_one_or_none()
         return group.name if group else None
     return None
 
 
-async def get_resource_name(db: AsyncSession, resource_type: str, resource_id: str) -> Optional[str]:
+async def get_resource_name(db: AsyncSession, resource_type: str, resource_id: str) -> str | None:
     """Get the name of a resource."""
-    from app.models import Broker, Alarm, Alert, Dashboard
+    from app.models import Alarm, Alert, Broker, Dashboard
 
     if resource_type == "site":
         result = await db.execute(select(Site).where(Site.id == resource_id))
         site = result.scalar_one_or_none()
         return site.name if site else None
-    elif resource_type == "plan":
+    if resource_type == "plan":
         result = await db.execute(select(Plan).where(Plan.id == resource_id))
         plan = result.scalar_one_or_none()
         return plan.name if plan else None
-    elif resource_type == "sensor":
+    if resource_type == "sensor":
         result = await db.execute(select(Sensor).where(Sensor.id == resource_id))
         sensor = result.scalar_one_or_none()
         return sensor.name if sensor else None
-    elif resource_type == "broker":
+    if resource_type == "broker":
         result = await db.execute(select(Broker).where(Broker.id == resource_id))
         broker = result.scalar_one_or_none()
         return broker.name if broker else None
-    elif resource_type == "alarm":
+    if resource_type == "alarm":
         result = await db.execute(select(Alarm).where(Alarm.id == resource_id))
         alarm = result.scalar_one_or_none()
         return alarm.name if alarm else None
-    elif resource_type == "alert":
+    if resource_type == "alert":
         result = await db.execute(select(Alert).where(Alert.id == resource_id))
         alert = result.scalar_one_or_none()
         return f"Alert {alert.id[:8]}" if alert else None
-    elif resource_type == "dashboard":
+    if resource_type == "dashboard":
         result = await db.execute(select(Dashboard).where(Dashboard.id == resource_id))
         dashboard = result.scalar_one_or_none()
         return dashboard.name if dashboard else None
-    elif resource_type == "group":
+    if resource_type == "group":
         result = await db.execute(select(Group).where(Group.id == resource_id))
         group = result.scalar_one_or_none()
         return group.name if group else None
-    elif resource_type == "user":
+    if resource_type == "user":
         result = await db.execute(select(User).where(User.id == resource_id))
         user = result.scalar_one_or_none()
         return user.username if user else None
@@ -104,6 +103,16 @@ async def enrich_permission(db: AsyncSession, perm: ResourcePermission) -> Permi
     """Enrich a permission with grantee and resource names."""
     grantee_name = await get_grantee_name(db, perm.grantee_type.value, perm.grantee_id)
     resource_name = await get_resource_name(db, perm.resource_type.value, perm.resource_id)
+
+    # Get fields - SQLAlchemy JSON type handles deserialization automatically
+    # but may need additional parsing if double-encoded from seed data
+    fields = perm.fields
+    if fields and isinstance(fields, str):
+        try:
+            # Handle double-encoded JSON from seed data
+            fields = json.loads(fields)
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     return PermissionResponse(
         id=perm.id,
@@ -116,19 +125,19 @@ async def enrich_permission(db: AsyncSession, perm: ResourcePermission) -> Permi
         permission=perm.permission,
         effect=perm.effect,
         inherit=perm.inherit,
+        fields=fields,
+        expires_at=perm.expires_at,
         granted_by=perm.granted_by,
         granted_at=perm.granted_at,
     )
 
 
-@router.get("", response_model=List[PermissionResponse])
+@router.get("", response_model=list[PermissionResponse])
 async def list_my_permissions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    List all permissions granted to the current user (directly or through groups).
-    """
+    """List all permissions granted to the current user (directly or through groups)."""
     perm_service = PermissionService(db)
 
     # Get user's permissions
@@ -142,12 +151,7 @@ async def list_my_permissions(
     group_perms = []
     if group_ids:
         result = await db.execute(
-            select(ResourcePermission).where(
-                and_(
-                    ResourcePermission.grantee_type == "group",
-                    ResourcePermission.grantee_id.in_(group_ids)
-                )
-            )
+            select(ResourcePermission).where(and_(ResourcePermission.grantee_type == "group", ResourcePermission.grantee_id.in_(group_ids)))
         )
         group_perms = result.scalars().all()
 
@@ -161,15 +165,14 @@ async def list_my_permissions(
     return enriched
 
 
-@router.get("/resource/{resource_type}/{resource_id}", response_model=List[PermissionResponse])
+@router.get("/resource/{resource_type}/{resource_id}", response_model=list[PermissionResponse])
 async def list_resource_permissions(
     resource_type: str,
     resource_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    List all permissions for a specific resource.
+    """List all permissions for a specific resource.
 
     Requires 'manage' permission on the resource.
     """
@@ -179,23 +182,12 @@ async def list_resource_permissions(
     try:
         rt = ResourceType(resource_type)
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid resource type: {resource_type}"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid resource type: {resource_type}")
 
-    has_permission = await perm_service.check(
-        current_user,
-        rt,
-        resource_id,
-        PermissionEnum.MANAGE
-    )
+    has_permission = await perm_service.check(current_user, rt, resource_id, PermissionEnum.MANAGE)
 
     if not has_permission:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view permissions for this resource"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have permission to view permissions for this resource")
 
     # Get permissions
     permissions = await perm_service.list_for_resource(rt, resource_id)
@@ -214,58 +206,37 @@ async def grant_permission(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Grant a permission to a user or group.
+    """Grant a permission to a user or group.
 
     Requires 'manage' permission on the resource.
     """
     perm_service = PermissionService(db)
 
     # Check if current user has manage permission on the resource
-    has_permission = await perm_service.check(
-        current_user,
-        perm_create.resource_type,
-        perm_create.resource_id,
-        PermissionEnum.MANAGE
-    )
+    has_permission = await perm_service.check(current_user, perm_create.resource_type, perm_create.resource_id, PermissionEnum.MANAGE)
 
     if not has_permission:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to grant permissions on this resource"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have permission to grant permissions on this resource")
 
     # Verify grantee exists
     if perm_create.grantee_type.value == "user":
         result = await db.execute(select(User).where(User.id == perm_create.grantee_id))
         if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     elif perm_create.grantee_type.value == "group":
         result = await db.execute(select(Group).where(Group.id == perm_create.grantee_id))
         if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Group not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
 
     # Verify resource exists
     if perm_create.resource_type.value == "user":
         result = await db.execute(select(User).where(User.id == perm_create.resource_id))
         if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Target user not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found")
     elif perm_create.resource_type.value == "group":
         result = await db.execute(select(Group).where(Group.id == perm_create.resource_id))
         if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Target group not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target group not found")
 
     # Grant permission
     permission = await perm_service.grant(
@@ -293,7 +264,7 @@ async def grant_permission(
             "inherit": perm_create.inherit,
             "fields": perm_create.fields,
             "expires_at": perm_create.expires_at.isoformat() if perm_create.expires_at else None,
-        }
+        },
     )
 
     # Enrich and return
@@ -306,38 +277,24 @@ async def revoke_permission(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Revoke a permission.
+    """Revoke a permission.
 
     Requires 'manage' permission on the resource.
     """
     perm_service = PermissionService(db)
 
     # Get the permission to check
-    result = await db.execute(
-        select(ResourcePermission).where(ResourcePermission.id == permission_id)
-    )
+    result = await db.execute(select(ResourcePermission).where(ResourcePermission.id == permission_id))
     permission = result.scalar_one_or_none()
 
     if not permission:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Permission not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Permission not found")
 
     # Check if current user has manage permission on the resource
-    has_permission = await perm_service.check(
-        current_user,
-        permission.resource_type,
-        permission.resource_id,
-        PermissionEnum.MANAGE
-    )
+    has_permission = await perm_service.check(current_user, permission.resource_type, permission.resource_id, PermissionEnum.MANAGE)
 
     if not has_permission:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to revoke permissions on this resource"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have permission to revoke permissions on this resource")
 
     # Store permission details before revoking for audit log
     grantee_type = permission.grantee_type.value
@@ -350,10 +307,7 @@ async def revoke_permission(
     success = await perm_service.revoke(permission_id)
 
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Permission not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Permission not found")
 
     # Log audit event
     audit_service = AuditService(db)
@@ -366,7 +320,7 @@ async def revoke_permission(
         permission=perm_name,
         details={
             "grantee_type": grantee_type,
-        }
+        },
     )
 
 
@@ -376,19 +330,12 @@ async def check_permissions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Bulk check permissions for the current user.
-    """
+    """Bulk check permissions for the current user."""
     perm_service = PermissionService(db)
 
     results = []
     for check in check_request.checks:
-        allowed = await perm_service.check(
-            current_user,
-            check.resource_type,
-            check.resource_id,
-            check.permission
-        )
+        allowed = await perm_service.check(current_user, check.resource_type, check.resource_id, check.permission)
 
         results.append(
             PermissionCheckResult(
@@ -409,8 +356,7 @@ async def get_effective_permissions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get effective permissions for the current user on a resource.
+    """Get effective permissions for the current user on a resource.
 
     Shows what permissions the user has and where they come from.
     """
@@ -420,10 +366,7 @@ async def get_effective_permissions(
     try:
         rt = ResourceType(resource_type)
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid resource type: {resource_type}"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid resource type: {resource_type}")
 
     # Get effective permissions
     perms = await get_eff_perms(db, current_user.id, resource_type, resource_id)
@@ -434,7 +377,7 @@ async def get_effective_permissions(
         "resource_type": resource_type,
         "resource_id": resource_id,
         "resource_name": await get_resource_name(db, resource_type, resource_id),
-        "permissions": perms
+        "permissions": perms,
     }
 
 
@@ -445,8 +388,7 @@ async def get_inheritance_chain(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    View the inheritance chain for a resource.
+    """View the inheritance chain for a resource.
 
     Shows the resource's ancestors from which it can inherit permissions.
     """
@@ -456,10 +398,7 @@ async def get_inheritance_chain(
     try:
         rt = ResourceType(resource_type)
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid resource type: {resource_type}"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid resource type: {resource_type}")
 
     # Get ancestors
     ancestors = await get_ancestors(db, resource_type, resource_id)
@@ -468,18 +407,13 @@ async def get_inheritance_chain(
     enriched_chain = []
     for res_type, res_id, depth in ancestors:
         name = await get_resource_name(db, res_type, res_id)
-        enriched_chain.append({
-            "resource_type": res_type,
-            "resource_id": res_id,
-            "resource_name": name,
-            "depth": depth
-        })
+        enriched_chain.append({"resource_type": res_type, "resource_id": res_id, "resource_name": name, "depth": depth})
 
     return {
         "resource_type": resource_type,
         "resource_id": resource_id,
         "resource_name": await get_resource_name(db, resource_type, resource_id),
-        "inheritance_chain": enriched_chain
+        "inheritance_chain": enriched_chain,
     }
 
 
@@ -489,8 +423,7 @@ async def get_user_inheritance_tree(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get the full permission inheritance tree for a user.
+    """Get the full permission inheritance tree for a user.
 
     Returns a hierarchical tree showing:
     - User's group memberships
@@ -498,64 +431,39 @@ async def get_user_inheritance_tree(
     - Permission sources (direct, via group, inherited from parent)
     - DENY permissions that block access
     """
-    from app.services.hierarchy import get_ancestors
-    from app.models import Broker, Alarm, Alert, Dashboard
-    from app.models.permission import GranteeType, Effect
-    from app.services.permission_service import get_user_groups
     from datetime import datetime
+
+    from app.models import Alarm, Alert, Broker
+    from app.models.permission import GranteeType
+    from app.services.permission_service import get_user_groups
 
     # Verify target user exists
     result = await db.execute(select(User).where(User.id == user_id))
     target_user = result.scalar_one_or_none()
 
     if not target_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     # Check permissions (admin or self)
     if current_user.id != user_id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only view your own inheritance tree"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only view your own inheritance tree")
 
     # Get user's groups
     group_ids = await get_user_groups(db, user_id)
     groups = []
     if group_ids:
-        groups_result = await db.execute(
-            select(Group).where(Group.id.in_(group_ids))
-        )
+        groups_result = await db.execute(select(Group).where(Group.id.in_(group_ids)))
         groups = [{"id": g.id, "name": g.name} for g in groups_result.scalars().all()]
 
     # Build grantee conditions
-    grantee_conditions = [
-        and_(
-            ResourcePermission.grantee_type == GranteeType.USER,
-            ResourcePermission.grantee_id == user_id
-        )
-    ]
+    grantee_conditions = [and_(ResourcePermission.grantee_type == GranteeType.USER, ResourcePermission.grantee_id == user_id)]
     for group_id in group_ids:
-        grantee_conditions.append(
-            and_(
-                ResourcePermission.grantee_type == GranteeType.GROUP,
-                ResourcePermission.grantee_id == group_id
-            )
-        )
+        grantee_conditions.append(and_(ResourcePermission.grantee_type == GranteeType.GROUP, ResourcePermission.grantee_id == group_id))
 
     # Get all permissions for user and their groups
     permissions_result = await db.execute(
-        select(ResourcePermission)
-        .where(
-            and_(
-                or_(*grantee_conditions),
-                or_(
-                    ResourcePermission.expires_at.is_(None),
-                    ResourcePermission.expires_at > datetime.utcnow()
-                )
-            )
+        select(ResourcePermission).where(
+            and_(or_(*grantee_conditions), or_(ResourcePermission.expires_at.is_(None), ResourcePermission.expires_at > datetime.utcnow()))
         )
     )
     all_permissions = permissions_result.scalars().all()
@@ -569,7 +477,7 @@ async def get_user_inheritance_tree(
 
     for site in all_sites:
         # Check if user has any permissions on this site or its descendants
-        site_perms = [p for p in all_permissions if p.resource_type.value == 'site' and p.resource_id == site.id]
+        site_perms = [p for p in all_permissions if p.resource_type.value == "site" and p.resource_id == site.id]
 
         # Get site's children (plans)
         plans_result = await db.execute(select(Plan).where(Plan.site_id == site.id))
@@ -577,7 +485,7 @@ async def get_user_inheritance_tree(
 
         plan_nodes = []
         for plan in plans:
-            plan_perms = [p for p in all_permissions if p.resource_type.value == 'plan' and p.resource_id == plan.id]
+            plan_perms = [p for p in all_permissions if p.resource_type.value == "plan" and p.resource_id == plan.id]
 
             # Get plan's children (sensors and brokers)
             sensors_result = await db.execute(select(Sensor).where(Sensor.plan_id == plan.id))
@@ -590,7 +498,7 @@ async def get_user_inheritance_tree(
 
             # Process sensors
             for sensor in sensors:
-                sensor_perms = [p for p in all_permissions if p.resource_type.value == 'sensor' and p.resource_id == sensor.id]
+                sensor_perms = [p for p in all_permissions if p.resource_type.value == "sensor" and p.resource_id == sensor.id]
 
                 # Get sensor's alarms
                 alarms_result = await db.execute(select(Alarm).where(Alarm.sensor_id == sensor.id))
@@ -598,7 +506,7 @@ async def get_user_inheritance_tree(
 
                 alarm_nodes = []
                 for alarm in alarms:
-                    alarm_perms = [p for p in all_permissions if p.resource_type.value == 'alarm' and p.resource_id == alarm.id]
+                    alarm_perms = [p for p in all_permissions if p.resource_type.value == "alarm" and p.resource_id == alarm.id]
 
                     # Get alarm's alerts
                     alerts_result = await db.execute(select(Alert).where(Alert.alarm_id == alarm.id))
@@ -606,129 +514,114 @@ async def get_user_inheritance_tree(
 
                     alert_nodes = []
                     for alert in alerts:
-                        alert_perms = [p for p in all_permissions if p.resource_type.value == 'alert' and p.resource_id == alert.id]
+                        alert_perms = [p for p in all_permissions if p.resource_type.value == "alert" and p.resource_id == alert.id]
 
                         # Compute effective permissions for alert
-                        alert_effective = await compute_effective_permissions(
-                            db, user_id, 'alert', alert.id, alert_perms, all_permissions, groups
-                        )
+                        alert_effective = await compute_effective_permissions(db, user_id, "alert", alert.id, alert_perms, all_permissions, groups)
 
-                        if alert_effective['permissions'] or alert_effective['denies']:
-                            alert_nodes.append({
-                                "id": alert.id,
-                                "name": f"Alert {alert.id[:8]}",
-                                "type": "alert",
-                                "permissions": alert_effective['permissions'],
-                                "denies": alert_effective['denies'],
-                                "children": []
-                            })
+                        if alert_effective["permissions"] or alert_effective["denies"]:
+                            alert_nodes.append(
+                                {
+                                    "id": alert.id,
+                                    "name": f"Alert {alert.id[:8]}",
+                                    "type": "alert",
+                                    "permissions": alert_effective["permissions"],
+                                    "denies": alert_effective["denies"],
+                                    "children": [],
+                                }
+                            )
 
                     # Compute effective permissions for alarm
-                    alarm_effective = await compute_effective_permissions(
-                        db, user_id, 'alarm', alarm.id, alarm_perms, all_permissions, groups
-                    )
+                    alarm_effective = await compute_effective_permissions(db, user_id, "alarm", alarm.id, alarm_perms, all_permissions, groups)
 
-                    if alarm_effective['permissions'] or alarm_effective['denies'] or alert_nodes:
-                        alarm_nodes.append({
-                            "id": alarm.id,
-                            "name": alarm.name,
-                            "type": "alarm",
-                            "permissions": alarm_effective['permissions'],
-                            "denies": alarm_effective['denies'],
-                            "children": alert_nodes
-                        })
+                    if alarm_effective["permissions"] or alarm_effective["denies"] or alert_nodes:
+                        alarm_nodes.append(
+                            {
+                                "id": alarm.id,
+                                "name": alarm.name,
+                                "type": "alarm",
+                                "permissions": alarm_effective["permissions"],
+                                "denies": alarm_effective["denies"],
+                                "children": alert_nodes,
+                            }
+                        )
 
                 # Compute effective permissions for sensor
-                sensor_effective = await compute_effective_permissions(
-                    db, user_id, 'sensor', sensor.id, sensor_perms, all_permissions, groups
-                )
+                sensor_effective = await compute_effective_permissions(db, user_id, "sensor", sensor.id, sensor_perms, all_permissions, groups)
 
-                if sensor_effective['permissions'] or sensor_effective['denies'] or alarm_nodes:
-                    children.append({
-                        "id": sensor.id,
-                        "name": sensor.name,
-                        "type": "sensor",
-                        "permissions": sensor_effective['permissions'],
-                        "denies": sensor_effective['denies'],
-                        "children": alarm_nodes
-                    })
+                if sensor_effective["permissions"] or sensor_effective["denies"] or alarm_nodes:
+                    children.append(
+                        {
+                            "id": sensor.id,
+                            "name": sensor.name,
+                            "type": "sensor",
+                            "permissions": sensor_effective["permissions"],
+                            "denies": sensor_effective["denies"],
+                            "children": alarm_nodes,
+                        }
+                    )
 
             # Process brokers
             for broker in brokers:
-                broker_perms = [p for p in all_permissions if p.resource_type.value == 'broker' and p.resource_id == broker.id]
+                broker_perms = [p for p in all_permissions if p.resource_type.value == "broker" and p.resource_id == broker.id]
 
                 # Compute effective permissions for broker
-                broker_effective = await compute_effective_permissions(
-                    db, user_id, 'broker', broker.id, broker_perms, all_permissions, groups
-                )
+                broker_effective = await compute_effective_permissions(db, user_id, "broker", broker.id, broker_perms, all_permissions, groups)
 
-                if broker_effective['permissions'] or broker_effective['denies']:
-                    children.append({
-                        "id": broker.id,
-                        "name": broker.name,
-                        "type": "broker",
-                        "permissions": broker_effective['permissions'],
-                        "denies": broker_effective['denies'],
-                        "children": []
-                    })
+                if broker_effective["permissions"] or broker_effective["denies"]:
+                    children.append(
+                        {
+                            "id": broker.id,
+                            "name": broker.name,
+                            "type": "broker",
+                            "permissions": broker_effective["permissions"],
+                            "denies": broker_effective["denies"],
+                            "children": [],
+                        }
+                    )
 
             # Compute effective permissions for plan
-            plan_effective = await compute_effective_permissions(
-                db, user_id, 'plan', plan.id, plan_perms, all_permissions, groups
-            )
+            plan_effective = await compute_effective_permissions(db, user_id, "plan", plan.id, plan_perms, all_permissions, groups)
 
-            if plan_effective['permissions'] or plan_effective['denies'] or children:
-                plan_nodes.append({
-                    "id": plan.id,
-                    "name": plan.name,
-                    "type": "plan",
-                    "permissions": plan_effective['permissions'],
-                    "denies": plan_effective['denies'],
-                    "children": children
-                })
+            if plan_effective["permissions"] or plan_effective["denies"] or children:
+                plan_nodes.append(
+                    {
+                        "id": plan.id,
+                        "name": plan.name,
+                        "type": "plan",
+                        "permissions": plan_effective["permissions"],
+                        "denies": plan_effective["denies"],
+                        "children": children,
+                    }
+                )
 
         # Compute effective permissions for site
-        site_effective = await compute_effective_permissions(
-            db, user_id, 'site', site.id, site_perms, all_permissions, groups
-        )
+        site_effective = await compute_effective_permissions(db, user_id, "site", site.id, site_perms, all_permissions, groups)
 
-        if site_effective['permissions'] or site_effective['denies'] or plan_nodes:
-            tree_nodes.append({
-                "id": site.id,
-                "name": site.name,
-                "type": "site",
-                "permissions": site_effective['permissions'],
-                "denies": site_effective['denies'],
-                "children": plan_nodes
-            })
+        if site_effective["permissions"] or site_effective["denies"] or plan_nodes:
+            tree_nodes.append(
+                {
+                    "id": site.id,
+                    "name": site.name,
+                    "type": "site",
+                    "permissions": site_effective["permissions"],
+                    "denies": site_effective["denies"],
+                    "children": plan_nodes,
+                }
+            )
 
-    return {
-        "user": {
-            "id": target_user.id,
-            "username": target_user.username
-        },
-        "groups": groups,
-        "tree": tree_nodes
-    }
+    return {"user": {"id": target_user.id, "username": target_user.username}, "groups": groups, "tree": tree_nodes}
 
 
 async def compute_effective_permissions(
-    db: AsyncSession,
-    user_id: str,
-    resource_type: str,
-    resource_id: str,
-    direct_perms: list,
-    all_permissions: list,
-    groups: list
+    db: AsyncSession, user_id: str, resource_type: str, resource_id: str, direct_perms: list, all_permissions: list, groups: list
 ) -> dict:
-    """
-    Compute effective permissions for a resource considering inheritance.
+    """Compute effective permissions for a resource considering inheritance.
 
     Returns:
         dict with 'permissions' (list of allow perms) and 'denies' (list of deny perms)
     """
     from app.services.hierarchy import get_ancestors
-    from app.models.permission import Effect
 
     # Get ancestors for inheritance
     ancestors = await get_ancestors(db, resource_type, resource_id)
@@ -737,10 +630,7 @@ async def compute_effective_permissions(
     applicable_perms = []
 
     for res_type, res_id, depth in ancestors:
-        matching_perms = [
-            p for p in all_permissions
-            if p.resource_type.value == res_type and p.resource_id == res_id
-        ]
+        matching_perms = [p for p in all_permissions if p.resource_type.value == res_type and p.resource_id == res_id]
 
         for perm in matching_perms:
             # Skip non-inheritable permissions on ancestors
@@ -751,31 +641,30 @@ async def compute_effective_permissions(
             source = None
             is_inherited = depth > 0
 
-            if perm.grantee_type.value == 'user':
-                source = 'direct'
+            if perm.grantee_type.value == "user":
+                source = "direct"
             else:
                 # Find group name
-                group_name = next((g['name'] for g in groups if g['id'] == perm.grantee_id), 'Unknown Group')
+                group_name = next((g["name"] for g in groups if g["id"] == perm.grantee_id), "Unknown Group")
                 source = f"via {group_name}"
 
-            applicable_perms.append({
-                'permission': perm.permission.value,
-                'effect': perm.effect.value,
-                'fields': parse_fields(perm.fields),
-                'inherit': perm.inherit,
-                'source': source,
-                'is_inherited': is_inherited,
-                'depth': depth
-            })
+            applicable_perms.append(
+                {
+                    "permission": perm.permission.value,
+                    "effect": perm.effect.value,
+                    "fields": parse_fields(perm.fields),
+                    "inherit": perm.inherit,
+                    "source": source,
+                    "is_inherited": is_inherited,
+                    "depth": depth,
+                }
+            )
 
     # Separate allows and denies
-    allows = [p for p in applicable_perms if p['effect'] == 'allow']
-    denies = [p for p in applicable_perms if p['effect'] == 'deny']
+    allows = [p for p in applicable_perms if p["effect"] == "allow"]
+    denies = [p for p in applicable_perms if p["effect"] == "deny"]
 
-    return {
-        'permissions': allows,
-        'denies': denies
-    }
+    return {"permissions": allows, "denies": denies}
 
 
 @router.get("/matrix", response_model=PermissionMatrixResponse)
@@ -785,8 +674,7 @@ async def get_permission_matrix(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get a permission matrix for a specific resource.
+    """Get a permission matrix for a specific resource.
 
     Shows a grid with grantees as rows and permissions as columns,
     indicating which permissions each grantee has on the resource
@@ -794,55 +682,34 @@ async def get_permission_matrix(
 
     Requires 'manage' permission on the resource.
     """
+    from app.models.permission import Effect
     from app.services.hierarchy import get_ancestors
-    from app.models.permission import Effect, GranteeType
 
     # Validate resource type
     try:
         rt = ResourceType(resource_type)
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid resource type: {resource_type}"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid resource type: {resource_type}")
 
     # Check if user has manage permission on the resource
     perm_service = PermissionService(db)
-    has_permission = await perm_service.check(
-        current_user,
-        rt,
-        resource_id,
-        PermissionEnum.MANAGE
-    )
+    has_permission = await perm_service.check(current_user, rt, resource_id, PermissionEnum.MANAGE)
 
     if not has_permission:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view the permission matrix for this resource"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have permission to view the permission matrix for this resource")
 
     # Get resource name
     resource_name = await get_resource_name(db, resource_type, resource_id)
     if not resource_name:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Resource not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
 
     # Get all permissions for this resource and its ancestors
     ancestors = await get_ancestors(db, resource_type, resource_id)
 
     # Query all permissions for this resource and ancestors
     all_perms_result = await db.execute(
-        select(ResourcePermission)
-        .where(
-            or_(*[
-                and_(
-                    ResourcePermission.resource_type == res_type,
-                    ResourcePermission.resource_id == res_id
-                )
-                for res_type, res_id, _ in ancestors
-            ])
+        select(ResourcePermission).where(
+            or_(*[and_(ResourcePermission.resource_type == res_type, ResourcePermission.resource_id == res_id) for res_type, res_id, _ in ancestors])
         )
     )
     all_permissions = all_perms_result.scalars().all()
@@ -853,10 +720,7 @@ async def get_permission_matrix(
     for perm in all_permissions:
         # Determine if this permission is inherited
         is_direct = perm.resource_type.value == resource_type and perm.resource_id == resource_id
-        depth = next(
-            (d for rt, ri, d in ancestors if rt == perm.resource_type.value and ri == perm.resource_id),
-            None
-        )
+        depth = next((d for rt, ri, d in ancestors if rt == perm.resource_type.value and ri == perm.resource_id), None)
 
         # Skip non-inheritable permissions on ancestors
         if depth is not None and depth > 0 and not perm.inherit:
@@ -865,101 +729,82 @@ async def get_permission_matrix(
         grantee_key = f"{perm.grantee_type.value}:{perm.grantee_id}"
 
         if grantee_key not in grantee_permissions:
-            grantee_permissions[grantee_key] = {
-                'grantee_type': perm.grantee_type,
-                'grantee_id': perm.grantee_id,
-                'permissions': {}
-            }
+            grantee_permissions[grantee_key] = {"grantee_type": perm.grantee_type, "grantee_id": perm.grantee_id, "permissions": {}}
 
         perm_type = perm.permission.value
 
         # Initialize permission info if not exists
-        if perm_type not in grantee_permissions[grantee_key]['permissions']:
-            grantee_permissions[grantee_key]['permissions'][perm_type] = {
-                'allowed': False,
-                'inherited': False,
-                'has_field_restrictions': False,
-                'fields': None,
-                'source': None
+        if perm_type not in grantee_permissions[grantee_key]["permissions"]:
+            grantee_permissions[grantee_key]["permissions"][perm_type] = {
+                "allowed": False,
+                "inherited": False,
+                "has_field_restrictions": False,
+                "fields": None,
+                "source": None,
             }
 
         # Update permission info
-        perm_info = grantee_permissions[grantee_key]['permissions'][perm_type]
+        perm_info = grantee_permissions[grantee_key]["permissions"][perm_type]
 
         # Only ALLOW effects grant permissions
         if perm.effect == Effect.ALLOW:
-            perm_info['allowed'] = True
+            perm_info["allowed"] = True
 
             if not is_direct:
-                perm_info['inherited'] = True
+                perm_info["inherited"] = True
                 # Get parent resource name for source
                 parent_name = await get_resource_name(db, perm.resource_type.value, perm.resource_id)
-                perm_info['source'] = f"{perm.resource_type.value}: {parent_name}"
+                perm_info["source"] = f"{perm.resource_type.value}: {parent_name}"
 
             parsed_fields = parse_fields(perm.fields)
             if parsed_fields is not None:
-                perm_info['has_field_restrictions'] = True
+                perm_info["has_field_restrictions"] = True
                 # Merge fields if multiple permissions exist
-                if perm_info['fields'] is None:
-                    perm_info['fields'] = parsed_fields
+                if perm_info["fields"] is None:
+                    perm_info["fields"] = parsed_fields
                 else:
-                    perm_info['fields'] = list(set(perm_info['fields'] + parsed_fields))
+                    perm_info["fields"] = list(set(perm_info["fields"] + parsed_fields))
 
     # Build matrix rows
     matrix_rows = []
 
     for grantee_key, grantee_data in grantee_permissions.items():
         # Get grantee name
-        grantee_name = await get_grantee_name(
-            db,
-            grantee_data['grantee_type'].value,
-            grantee_data['grantee_id']
-        )
+        grantee_name = await get_grantee_name(db, grantee_data["grantee_type"].value, grantee_data["grantee_id"])
 
         if not grantee_name:
-            grantee_name = grantee_data['grantee_id']
+            grantee_name = grantee_data["grantee_id"]
 
         # Create permission info objects for all permission types
         permissions_dict = {}
-        for perm_type in ['read', 'write', 'delete', 'create', 'manage']:
-            if perm_type in grantee_data['permissions']:
-                perm_data = grantee_data['permissions'][perm_type]
+        for perm_type in ["read", "write", "delete", "create", "manage"]:
+            if perm_type in grantee_data["permissions"]:
+                perm_data = grantee_data["permissions"][perm_type]
                 permissions_dict[perm_type] = MatrixPermissionInfo(**perm_data)
             else:
                 # Not granted
                 permissions_dict[perm_type] = MatrixPermissionInfo(allowed=False)
 
-        matrix_rows.append(MatrixRow(
-            grantee=MatrixGrantee(
-                grantee_id=grantee_data['grantee_id'],
-                grantee_name=grantee_name,
-                grantee_type=grantee_data['grantee_type']
-            ),
-            permissions=permissions_dict
-        ))
+        matrix_rows.append(
+            MatrixRow(
+                grantee=MatrixGrantee(grantee_id=grantee_data["grantee_id"], grantee_name=grantee_name, grantee_type=grantee_data["grantee_type"]),
+                permissions=permissions_dict,
+            )
+        )
 
     # Sort rows: groups first, then users; alphabetically within each type
-    matrix_rows.sort(key=lambda x: (
-        0 if x.grantee.grantee_type.value == 'group' else 1,
-        x.grantee.grantee_name.lower()
-    ))
+    matrix_rows.sort(key=lambda x: (0 if x.grantee.grantee_type.value == "group" else 1, x.grantee.grantee_name.lower()))
 
-    return PermissionMatrixResponse(
-        resource_type=resource_type,
-        resource_id=resource_id,
-        resource_name=resource_name,
-        grantees=matrix_rows
-    )
+    return PermissionMatrixResponse(resource_type=resource_type, resource_id=resource_id, resource_name=resource_name, grantees=matrix_rows)
 
 
-@router.get("/expiring", response_model=List[ExpiringPermissionResponse])
+@router.get("/expiring", response_model=list[ExpiringPermissionResponse])
 async def list_expiring_permissions(
     days_ahead: int = Query(default=7, ge=1, le=90, description="Number of days to look ahead"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get list of permissions expiring within the specified number of days.
+    """Get list of permissions expiring within the specified number of days.
 
     This endpoint is typically used by admins to monitor and manage
     permissions that are about to expire.
@@ -973,10 +818,7 @@ async def list_expiring_permissions(
     # Only allow admins to view expiring permissions
     # In a production system, you might want to allow users to see their own expiring permissions
     if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can view expiring permissions"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can view expiring permissions")
 
     # Get expiring permissions
     expiring_perms = await get_expiring_permissions(db, days_ahead)
@@ -1008,7 +850,7 @@ async def list_expiring_permissions(
                 expires_at=perm.expires_at,
                 granted_at=perm.granted_at,
                 granted_by=perm.granted_by,
-                days_until_expiry=days_until_expiry
+                days_until_expiry=days_until_expiry,
             )
         )
 

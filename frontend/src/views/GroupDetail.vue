@@ -3,8 +3,8 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/AppLayout.vue'
 import AddMemberModal from '@/components/groups/AddMemberModal.vue'
-import { fetchGroup, fetchGroupMembers } from '@/api/groups'
-import { fetchResourcePermissions, revokePermission } from '@/api/permissions'
+import { fetchGroup, fetchGroupMembers, fetchGroupPermissions } from '@/api/groups'
+import { revokePermission } from '@/api/permissions'
 import type { Group, User, Permission } from '@/types'
 
 const route = useRoute()
@@ -29,7 +29,7 @@ const loadGroupDetails = async () => {
     const [groupData, membersData, permissionsData] = await Promise.all([
       fetchGroup(groupId.value),
       fetchGroupMembers(groupId.value),
-      fetchResourcePermissions('group', groupId.value)
+      fetchGroupPermissions(groupId.value)
     ])
 
     group.value = groupData
@@ -99,9 +99,9 @@ const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString()
 }
 
-// Get permissions granted to this group (not member permissions)
+// Get permissions granted to this group (already filtered by the API endpoint)
 const groupPermissions = computed(() => {
-  return permissions.value.filter(p => p.grantee_type === 'group' && p.grantee_id === groupId.value)
+  return permissions.value
 })
 
 onMounted(() => {

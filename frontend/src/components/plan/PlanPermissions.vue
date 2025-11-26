@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { fetchPlanPermissions, revokePermission as revokePermissionApi } from '@/api/permissions'
 import EffectiveAccessList from '@/components/EffectiveAccessList.vue'
+import AddPermissionModal from '@/components/AddPermissionModal.vue'
 import type { PlanPermissionsResponse, PermissionWithGrantee } from '@/types'
 
 interface Props {
   planId: string
+  planName?: string
 }
 
 const props = defineProps<Props>()
@@ -14,6 +16,13 @@ const permissionsData = ref<PlanPermissionsResponse | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const showAddModal = ref(false)
+const showEditModal = ref(false)
+const editingPermission = ref<PermissionWithGrantee | null>(null)
+
+// Computed property for plan name (use from props or from permissions data)
+const currentPlanName = computed(() => {
+  return props.planName || permissionsData.value?.resource_name || 'Plan'
+})
 
 const loadPermissions = async () => {
   loading.value = true
@@ -48,9 +57,10 @@ const formatDate = (dateStr: string): string => {
 }
 
 const editPermission = (perm: PermissionWithGrantee) => {
-  // TODO: Implement edit functionality
-  console.log('Edit permission:', perm)
-  alert('Edit functionality will be implemented in a future phase')
+  // For now, we'll delete and re-add since the modal supports creating new permissions
+  // A full edit modal would need to pre-populate the form with existing values
+  editingPermission.value = perm
+  showEditModal.value = true
 }
 
 const revokePermission = async (perm: PermissionWithGrantee) => {
@@ -69,9 +79,33 @@ const revokePermission = async (perm: PermissionWithGrantee) => {
 
 const handleAddPermission = () => {
   showAddModal.value = true
-  // TODO: Implement add permission modal
-  alert('Add permission functionality will be implemented in a future phase')
+}
+
+const handleModalClose = () => {
   showAddModal.value = false
+  showEditModal.value = false
+  editingPermission.value = null
+}
+
+const handlePermissionSaved = async () => {
+  showAddModal.value = false
+  showEditModal.value = false
+  editingPermission.value = null
+  await loadPermissions()
+}
+
+const handleEditSaved = async () => {
+  // After adding the new permission via edit modal, delete the old one
+  if (editingPermission.value) {
+    try {
+      await revokePermissionApi(editingPermission.value.id)
+    } catch (err) {
+      console.warn('Could not revoke old permission during edit:', err)
+    }
+  }
+  showEditModal.value = false
+  editingPermission.value = null
+  await loadPermissions()
 }
 
 onMounted(() => {
@@ -261,6 +295,26 @@ onMounted(() => {
         </div>
       </section>
     </div>
+
+    <!-- Add Permission Modal -->
+    <AddPermissionModal
+      v-if="showAddModal"
+      resource-type="plan"
+      :resource-id="planId"
+      :resource-name="currentPlanName"
+      @close="handleModalClose"
+      @saved="handlePermissionSaved"
+    />
+
+    <!-- Edit Permission Modal (reuses AddPermissionModal) -->
+    <AddPermissionModal
+      v-if="showEditModal && editingPermission"
+      resource-type="plan"
+      :resource-id="planId"
+      :resource-name="currentPlanName"
+      @close="handleModalClose"
+      @saved="handleEditSaved"
+    />
   </div>
 </template>
 
