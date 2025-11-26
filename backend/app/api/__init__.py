@@ -1,6 +1,6 @@
 """API routers."""
 
-from app.api import auth, permissions, sites, plans, sensors
+from app.api import auth, permissions, sites, plans, sensors, users, groups
 
 __all__ = [
     "auth",
@@ -8,4 +8,6 @@ __all__ = [
     "sites",
     "plans",
     "sensors",
+    "users",
+    "groups",
 ]

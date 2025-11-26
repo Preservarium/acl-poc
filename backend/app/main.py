@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import engine
 from app.models import Base
-from app.api import auth, permissions, sites, plans, sensors
+from app.api import auth, permissions, sites, plans, sensors, users, groups
 
 
 @asynccontextmanager
@@ -57,3 +57,5 @@ app.include_router(permissions.router, prefix="/api")
 app.include_router(sites.router, prefix="/api")
 app.include_router(plans.router, prefix="/api")
 app.include_router(sensors.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
+app.include_router(groups.router, prefix="/api")

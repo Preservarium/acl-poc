@@ -67,6 +67,22 @@ export interface PermissionCheck {
   group_permissions: Permission[]
 }
 
+export interface MyPermission {
+  id: string
+  grantee_type: string
+  grantee_id: string
+  grantee_name: string
+  resource_type: string
+  resource_id: string
+  resource_name: string
+  permission: string
+  effect: string
+  inherit: boolean
+  granted_by: string | null
+  granted_at: string
+  via?: string
+}
+
 export interface MyPermissions {
   direct: Array<{
     resource: Resource
